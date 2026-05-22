@@ -6,7 +6,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.agents.official_sb3_dqn import aggregate_training_curves
-from src.analysis.plot_results import plot_risk_boxplots, plot_risk_case, plot_summary_bar
+from src.analysis.plot_results import plot_probability_histogram, plot_risk_boxplots, plot_risk_case, plot_summary_bar
 from src.analysis.plot_training import plot_mean_std_curve
 
 
@@ -51,12 +51,16 @@ if __name__ == "__main__":
             title="Official SB3 DQN Evaluation on highway-fast-v0 (100k, 3 seeds)",
         )
     plot_summary_bar(
-        metrics_dir / "official_sb3_dqn_highway_fast_eval_summary.csv",
+        metrics_dir / "official_100k_across_seeds.csv",
         figures_dir / "official_sb3_dqn_eval_bar.png",
     )
     plot_risk_boxplots(
-        metrics_dir / "official_dqn_risk_metrics.csv",
+        metrics_dir / "official_dqn_risk_metrics_fixed.csv",
         figures_dir / "official_dqn_risk_boxplots.png",
+    )
+    plot_probability_histogram(
+        metrics_dir / "official_dqn_probability_histogram.csv",
+        figures_dir / "official_dqn_probability_histogram.png",
     )
     case_paths = select_case_paths(metrics_dir)
     if case_paths:

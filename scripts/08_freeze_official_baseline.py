@@ -16,23 +16,24 @@ def copy_if_exists(src: Path, dst: Path) -> None:
 
 
 if __name__ == "__main__":
+    archive_root = ROOT / "results" / "legacy_unreliable" / "frozen_official_smoke"
     copy_if_exists(
         ROOT / "results" / "official_baseline" / "models" / "official_sb3_dqn_highway_fast_steps20000_seed0.zip",
-        ROOT / "results" / "models" / "official_sb3_dqn_highway_fast_seed0.zip",
+        archive_root / "models" / "official_sb3_dqn_highway_fast_seed0.zip",
     )
     copy_if_exists(
-        ROOT / "results" / "official_baseline" / "metrics" / "official_sb3_dqn_highway_fast_eval_summary.csv",
-        ROOT / "results" / "metrics" / "official_sb3_dqn_highway_fast_eval_summary.csv",
+        ROOT / "results" / "official_baseline" / "metrics" / "official_smoke_20k_summary.csv",
+        archive_root / "metrics" / "official_smoke_20k_summary.csv",
     )
     copy_if_exists(
         ROOT / "results" / "official_baseline" / "figures" / "official_sb3_dqn_training_reward.png",
-        ROOT / "results" / "figures" / "official_sb3_dqn_training_reward.png",
+        archive_root / "figures" / "official_sb3_dqn_training_reward.png",
     )
     copy_if_exists(
         ROOT / "results" / "official_baseline" / "figures" / "official_sb3_dqn_eval_reward.png",
-        ROOT / "results" / "figures" / "official_sb3_dqn_eval_reward.png",
+        archive_root / "figures" / "official_sb3_dqn_eval_reward.png",
     )
     copy_if_exists(
         ROOT / "results" / "official_baseline" / "videos" / "official_sb3_dqn_highway_fast_steps20000_seed0.gif",
-        ROOT / "results" / "videos" / "official_sb3_dqn_rollout.gif",
+        archive_root / "videos" / "official_sb3_dqn_rollout.gif",
     )

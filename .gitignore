@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.log
+
+results/**/tensorboard/
+results/official_baseline/tensorboard/
+
+*.tmp

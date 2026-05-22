@@ -10,7 +10,7 @@ from gymnasium import spaces
 from src.arbitration.arbitrator import ArbitrationWrapper
 from src.masking.action_mask import ActionMaskWrapper
 from src.risk.game_risk import compute_game_risk
-from src.risk.metrics import collect_step_metrics, _safe_position, _safe_speed, _lane_id
+from src.risk.metrics import collect_step_metrics, is_near_miss, _safe_position, _safe_speed, _lane_id
 from src.risk.risk_score import compute_risk_score
 
 
@@ -110,6 +110,9 @@ class MetricsWrapper(gym.Wrapper):
         self.risk_exposure = 0.0
         self.risk_score_max = 0.0
         self.near_miss_count = 0
+        self.ttc_min_episode = 1e6
+        self.thw_min_episode = 1e6
+        self.drac_max_episode = 0.0
         self.prev_lane = None
         self.initial_x = 0.0
         self.last_raw_action = -1
@@ -144,12 +147,11 @@ class MetricsWrapper(gym.Wrapper):
         self.speed_sum += speed_now
         self.risk_exposure += risk_score
         self.risk_score_max = max(self.risk_score_max, risk_score)
+        self.ttc_min_episode = min(self.ttc_min_episode, float(metrics.get("ttc_min", 1e6)))
+        self.thw_min_episode = min(self.thw_min_episode, float(metrics.get("thw_min", 1e6)))
+        self.drac_max_episode = max(self.drac_max_episode, float(metrics.get("drac_max", 0.0)))
         thresholds = self.risk_params.get("thresholds", {})
-        if (
-            metrics["ttc_min"] < float(thresholds.get("ttc_near_miss", 2.0))
-            or metrics["thw_min"] < float(thresholds.get("thw_near_miss", 1.0))
-            or metrics["drac_max"] > float(thresholds.get("drac_near_miss", 3.0))
-        ):
+        if is_near_miss(metrics, thresholds):
             self.near_miss_count += 1
         collision = int(bool(getattr(ego, "crashed", False))) if ego is not None else 0
         self.last_raw_action = int(info.get("raw_action", action))
@@ -181,9 +183,9 @@ class MetricsWrapper(gym.Wrapper):
                 "avg_speed": self.speed_sum / max(self.episode_length, 1),
                 "lane_change_count": self.lane_change_count,
                 "waiting_steps": self.waiting_steps,
-                "ttc_min": metrics["ttc_min"],
-                "thw_min": metrics["thw_min"],
-                "drac_max": metrics["drac_max"],
+                "ttc_min": self.ttc_min_episode,
+                "thw_min": self.thw_min_episode,
+                "drac_max": self.drac_max_episode,
                 "risk_exposure": self.risk_exposure,
                 "risk_score_max": self.risk_score_max,
                 "near_miss_count": self.near_miss_count,

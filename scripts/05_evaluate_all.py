@@ -7,13 +7,20 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.agents.official_sb3_dqn import aggregate_eval_metrics, evaluate_model, load_yaml
+from src.agents.official_sb3_dqn import (
+    evaluate_model,
+    load_eval_metrics,
+    load_yaml,
+    summarize_across_seeds,
+    summarize_episode_metrics,
+    summarize_probability_metrics,
+)
 
 
 def select_models(model_dir: Path):
-    hundred_k = sorted(model_dir.glob("official_sb3_dqn_highway_fast_steps100000_seed*.zip"))
-    if hundred_k:
-        return hundred_k
+    models = sorted(model_dir.glob("official_sb3_dqn_highway_fast_steps*_seed*.zip"))
+    if models:
+        return models
     return sorted(model_dir.glob("official_sb3_dqn_highway_fast_*.zip"))
 
 
@@ -54,8 +61,25 @@ if __name__ == "__main__":
         eval_paths.append(eval_path)
         risk_frames.append(risk_df)
         print(f"Evaluated: {model_path.name}")
-    summary = aggregate_eval_metrics(eval_paths)
-    if not summary.empty:
-        summary.to_csv(metrics_dir / "official_sb3_dqn_highway_fast_eval_summary.csv", index=False)
+
+    eval_df = load_eval_metrics(eval_paths)
+    if not eval_df.empty:
+        smoke_df = eval_df[eval_df["steps"] <= 20000].copy()
+        formal_df = eval_df[eval_df["steps"] >= 100000].copy()
+        if not smoke_df.empty:
+            smoke_summary = summarize_episode_metrics(smoke_df, ["method", "steps", "seed"])
+            smoke_summary.to_csv(metrics_dir / "official_smoke_20k_summary.csv", index=False)
+        if not formal_df.empty:
+            seed_summary = summarize_episode_metrics(formal_df, ["method", "steps", "seed"])
+            across_seeds = summarize_across_seeds(seed_summary)
+            seed_summary.to_csv(metrics_dir / "official_100k_seed_summary.csv", index=False)
+            across_seeds.to_csv(metrics_dir / "official_100k_across_seeds.csv", index=False)
+
     if risk_frames:
-        pd.concat(risk_frames, ignore_index=True).to_csv(metrics_dir / "official_dqn_risk_metrics.csv", index=False)
+        risk_df = pd.concat(risk_frames, ignore_index=True)
+        risk_df.to_csv(metrics_dir / "official_dqn_risk_metrics_fixed.csv", index=False)
+        probability_stats, probability_hist = summarize_probability_metrics(risk_df)
+        if not probability_stats.empty:
+            probability_stats.to_csv(metrics_dir / "official_dqn_probability_stats.csv", index=False)
+        if not probability_hist.empty:
+            probability_hist.to_csv(metrics_dir / "official_dqn_probability_histogram.csv", index=False)
