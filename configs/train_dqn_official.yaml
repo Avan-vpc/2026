@@ -1,0 +1,20 @@
+algo:
+  policy: MlpPolicy
+  net_arch: [256, 256]
+  learning_rate: 5.0e-4
+  buffer_size: 15000
+  learning_starts: 200
+  batch_size: 32
+  gamma: 0.8
+  train_freq: 1
+  gradient_steps: 1
+  target_update_interval: 50
+runtime:
+  smoke_timesteps: 20000
+  full_timesteps: 100000
+  seeds: [0, 1, 2]
+  smoke_eval_freq: 1000
+  full_eval_freq: 5000
+  checkpoint_eval_episodes: 20
+  final_eval_episodes: 200
+  deterministic_eval: true

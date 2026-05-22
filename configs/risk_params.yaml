@@ -1,0 +1,29 @@
+thresholds:
+  ttc_near_miss: 2.0
+  thw_near_miss: 1.0
+  drac_near_miss: 3.0
+  ttc_mask: 2.5
+  drac_mask: 3.0
+  risk_mask_threshold: 1.2
+weights:
+  ttc: 1.0
+  thw: 0.8
+  drac: 0.6
+  density: 0.3
+  game: 0.5
+reward:
+  risk_penalty_scale: 0.15
+  drac_penalty_scale: 0.1
+  waiting_penalty_scale: 0.02
+  oscillation_penalty_scale: 0.01
+  desired_speed_ratio: 0.85
+sigmoid:
+  a0: -0.5
+  a1: 0.12
+  a2: 0.30
+  a3: 0.25
+  a4: 0.08
+  a5: 0.60
+arbitration:
+  safe_gap: 18.0
+  risk_accept_threshold: 0.9

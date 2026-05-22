@@ -1,0 +1,5 @@
+env:
+  id: highway-fast-v0
+  config: {}
+seed: 0
+gif_fps: 15

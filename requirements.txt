@@ -1,0 +1,8 @@
+gymnasium
+highway-env
+stable-baselines3[extra]
+matplotlib
+pandas
+seaborn
+pyyaml
+tensorboard
