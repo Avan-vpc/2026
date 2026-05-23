@@ -11,6 +11,16 @@ weights:
   drac: 0.6
   density: 0.3
   game: 0.5
+risk_score_v2:
+  w_same_front: 2.0
+  w_target_rear: 2.5
+  w_target_front: 1.5
+  w_drac: 1.5
+  w_p_block: 0.5
+  ttc_threshold: 3.0
+  thw_threshold: 1.0
+  drac_threshold: 3.0
+  max_term: 3.0
 reward:
   risk_penalty_scale: 0.15
   drac_penalty_scale: 0.1

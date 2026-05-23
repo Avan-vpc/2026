@@ -1,8 +1,8 @@
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Tuple
 
 from src.risk.game_risk import compute_game_risk
 from src.risk.metrics import collect_step_metrics
-from src.risk.risk_score import compute_risk_score
+from src.risk.risk_score import compute_risk_scores
 
 
 DEFAULT_ACTIONS = {
@@ -38,9 +38,9 @@ class SafetyVerifier:
     def score_state(self, env: Any) -> Dict[str, float]:
         metrics = collect_step_metrics(env)
         game_risk = compute_game_risk(env, self.risk_params)
-        risk_score = compute_risk_score(metrics, game_risk, self.risk_params)
+        risk_bundle = compute_risk_scores(metrics, game_risk, self.risk_params)
         metrics.update(game_risk)
-        metrics["risk_score"] = risk_score
+        metrics.update(risk_bundle)
         return metrics
 
     def is_safe(self, env: Any, action: int) -> bool:

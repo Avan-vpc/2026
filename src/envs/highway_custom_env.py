@@ -11,7 +11,7 @@ from src.arbitration.arbitrator import ArbitrationWrapper
 from src.masking.action_mask import ActionMaskWrapper
 from src.risk.game_risk import compute_game_risk
 from src.risk.metrics import collect_step_metrics, is_near_miss, _safe_position, _safe_speed, _lane_id
-from src.risk.risk_score import compute_risk_score
+from src.risk.risk_score import compute_risk_scores
 
 
 class FlatObservationWrapper(gym.ObservationWrapper):
@@ -39,13 +39,13 @@ class RiskObservationWrapper(gym.ObservationWrapper):
         base = np.asarray(observation, dtype=np.float32).reshape(-1)
         metrics = collect_step_metrics(self.env)
         game = compute_game_risk(self.env, self.risk_params)
-        risk_score = compute_risk_score(metrics, game, self.risk_params)
+        risk_bundle = compute_risk_scores(metrics, game, self.risk_params)
         extra = np.asarray([
             metrics["ttc_min"],
             metrics["thw_min"],
             metrics["drac_max"],
             metrics["density"],
-            risk_score,
+            risk_bundle["risk_score"],
             game["P_yield"],
             game["P_block"],
         ], dtype=np.float32)
@@ -72,7 +72,8 @@ class RiskAwareRewardWrapper(gym.Wrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         metrics = collect_step_metrics(self.env)
         game = compute_game_risk(self.env, self.risk_params)
-        risk_score = compute_risk_score(metrics, game, self.risk_params)
+        risk_bundle = compute_risk_scores(metrics, game, self.risk_params)
+        risk_score = float(risk_bundle["risk_score"])
         reward_cfg = self.risk_params.get("reward", {})
         shaped_reward = float(reward)
         shaped_reward -= float(reward_cfg.get("risk_penalty_scale", 0.15)) * risk_score
@@ -90,7 +91,7 @@ class RiskAwareRewardWrapper(gym.Wrapper):
         info = dict(info)
         info["reward_raw"] = float(reward)
         info["reward_shaped"] = float(shaped_reward)
-        info["risk_score"] = float(risk_score)
+        info.update(risk_bundle)
         return obs, shaped_reward, terminated, truncated, info
 
 
@@ -107,8 +108,13 @@ class MetricsWrapper(gym.Wrapper):
         self.speed_sum = 0.0
         self.lane_change_count = 0
         self.waiting_steps = 0
-        self.risk_exposure = 0.0
-        self.risk_score_max = 0.0
+        self.risk_exposure_v1 = 0.0
+        self.risk_exposure_v2 = 0.0
+        self.risk_score_v1_max = 0.0
+        self.risk_score_v2_max = 0.0
+        self.same_lane_front_risk_max = 0.0
+        self.target_rear_risk_max = 0.0
+        self.target_front_risk_max = 0.0
         self.near_miss_count = 0
         self.ttc_min_episode = 1e6
         self.thw_min_episode = 1e6
@@ -132,7 +138,7 @@ class MetricsWrapper(gym.Wrapper):
         info = dict(info)
         metrics = collect_step_metrics(self.env)
         game = compute_game_risk(self.env, self.risk_params)
-        risk_score = compute_risk_score(metrics, game, self.risk_params)
+        risk_bundle = compute_risk_scores(metrics, game, self.risk_params)
         ego = getattr(self.unwrapped, "vehicle", None)
         lane_now = _lane_id(ego) if ego is not None else self.prev_lane
         speed_now = _safe_speed(ego) if ego is not None else 0.0
@@ -145,8 +151,13 @@ class MetricsWrapper(gym.Wrapper):
         self.episode_return += float(reward)
         self.episode_length += 1
         self.speed_sum += speed_now
-        self.risk_exposure += risk_score
-        self.risk_score_max = max(self.risk_score_max, risk_score)
+        self.risk_exposure_v1 += float(risk_bundle.get("risk_score_v1", 0.0))
+        self.risk_exposure_v2 += float(risk_bundle.get("risk_score_v2", 0.0))
+        self.risk_score_v1_max = max(self.risk_score_v1_max, float(risk_bundle.get("risk_score_v1", 0.0)))
+        self.risk_score_v2_max = max(self.risk_score_v2_max, float(risk_bundle.get("risk_score_v2", 0.0)))
+        self.same_lane_front_risk_max = max(self.same_lane_front_risk_max, float(risk_bundle.get("same_lane_front_risk", 0.0)))
+        self.target_rear_risk_max = max(self.target_rear_risk_max, float(risk_bundle.get("target_rear_risk", 0.0)))
+        self.target_front_risk_max = max(self.target_front_risk_max, float(risk_bundle.get("target_front_risk", 0.0)))
         self.ttc_min_episode = min(self.ttc_min_episode, float(metrics.get("ttc_min", 1e6)))
         self.thw_min_episode = min(self.thw_min_episode, float(metrics.get("thw_min", 1e6)))
         self.drac_max_episode = max(self.drac_max_episode, float(metrics.get("drac_max", 0.0)))
@@ -159,8 +170,8 @@ class MetricsWrapper(gym.Wrapper):
         self.last_source = str(info.get("chosen_source", "rl"))
         info.update(metrics)
         info.update(game)
+        info.update(risk_bundle)
         info.update({
-            "risk_score": risk_score,
             "collision": collision,
             "raw_action": self.last_raw_action,
             "final_action": self.last_final_action,
@@ -186,8 +197,15 @@ class MetricsWrapper(gym.Wrapper):
                 "ttc_min": self.ttc_min_episode,
                 "thw_min": self.thw_min_episode,
                 "drac_max": self.drac_max_episode,
-                "risk_exposure": self.risk_exposure,
-                "risk_score_max": self.risk_score_max,
+                "risk_exposure": self.risk_exposure_v2,
+                "risk_exposure_v1": self.risk_exposure_v1,
+                "risk_exposure_v2": self.risk_exposure_v2,
+                "risk_score_max": self.risk_score_v2_max,
+                "risk_score_v1_max": self.risk_score_v1_max,
+                "risk_score_v2_max": self.risk_score_v2_max,
+                "same_lane_front_risk": self.same_lane_front_risk_max,
+                "target_rear_risk": self.target_rear_risk_max,
+                "target_front_risk": self.target_front_risk_max,
                 "near_miss_count": self.near_miss_count,
                 "raw_action": self.last_raw_action,
                 "final_action": self.last_final_action,

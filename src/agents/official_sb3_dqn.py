@@ -1,7 +1,7 @@
 import re
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import gymnasium as gym
 import highway_env  # noqa: F401
@@ -14,10 +14,10 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 from tqdm.auto import tqdm
 
+from src.masking.safety_verifier import get_action_map
 from src.risk.game_risk import compute_game_risk
 from src.risk.metrics import _lane_id, _safe_position, _safe_speed, collect_step_metrics, is_near_miss
-from src.risk.risk_score import compute_risk_score
-from src.risk.target_gap import identify_target_gap
+from src.risk.risk_score import compute_risk_scores
 
 
 RUN_NAME_PATTERN = re.compile(r"^(?P<method>.+?)_steps(?P<steps>\d+)_seed(?P<seed>\d+)$")
@@ -32,7 +32,14 @@ EPISODE_METRICS = [
     "thw_min",
     "drac_max",
     "risk_exposure",
+    "risk_exposure_v1",
+    "risk_exposure_v2",
     "risk_score_max",
+    "risk_score_v1_max",
+    "risk_score_v2_max",
+    "same_lane_front_risk",
+    "target_rear_risk",
+    "target_front_risk",
     "near_miss_count",
     "target_gap_size",
     "target_rear_distance",
@@ -98,20 +105,14 @@ def parse_run_metadata(name: str) -> Dict[str, object]:
 
 def _risk_step(env, risk_params: Dict) -> Dict[str, float]:
     metrics = collect_step_metrics(env)
-    gap = identify_target_gap(env)
     game = compute_game_risk(env, risk_params)
-    risk_score = compute_risk_score(metrics, game, risk_params)
-    rear = gap.get("target_rear_vehicle")
-    ego = getattr(env.unwrapped, "vehicle", None)
-    rear_distance = 0.0
-    if ego is not None and rear is not None:
-        rear_distance = float(abs(_safe_position(ego)[0] - _safe_position(rear)[0]))
+    risk_bundle = compute_risk_scores(metrics, game, risk_params)
     step = {
         **metrics,
-        "risk_score": float(risk_score),
-        "target_gap_size": float(metrics.get("target_gap_size", gap.get("gap_size", 0.0))),
-        "target_rear_distance": float(metrics.get("target_rear_distance", rear_distance)),
-        "target_rear_relative_speed": float(metrics.get("target_rear_relative_speed", gap.get("rear_relative_speed", 0.0))),
+        **risk_bundle,
+        "target_gap_size": float(metrics.get("target_gap_size", 0.0)),
+        "target_rear_distance": float(metrics.get("target_rear_distance", 0.0)),
+        "target_rear_relative_speed": float(metrics.get("target_rear_relative_speed", 0.0)),
         "p_yield": float(game.get("P_yield", 0.0)),
         "p_block": float(game.get("P_block", 0.0)),
         "near_miss_flag": float(is_near_miss(metrics, risk_params.get("thresholds", {}))),
@@ -120,7 +121,16 @@ def _risk_step(env, risk_params: Dict) -> Dict[str, float]:
 
 
 class OfficialTrainCallback(BaseCallback):
-    def __init__(self, eval_env, eval_freq: int, n_eval_episodes: int, csv_path: Path, total_timesteps: int, run_name: str, deterministic_eval: bool):
+    def __init__(
+        self,
+        eval_env,
+        eval_freq: int,
+        n_eval_episodes: int,
+        csv_path: Path,
+        total_timesteps: int,
+        run_name: str,
+        deterministic_eval: bool,
+    ):
         super().__init__()
         self.eval_env = eval_env
         self.eval_freq = int(eval_freq)
@@ -251,19 +261,18 @@ def train_official_baseline(
     return {"model_path": model_path, "curve_csv": curve_csv}
 
 
-def evaluate_model(
-    model_path: Path,
+def _evaluate_policy_core(
+    policy_fn: Callable[[np.ndarray], int],
+    run_name: str,
     env_config_path: Path,
     risk_config_path: Path,
     seed: int,
     episodes: int,
-    deterministic_eval: bool,
     gif_path: Optional[Path] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    model = DQN.load(Path(model_path))
     env_cfg = load_yaml(Path(env_config_path))
     risk_params = load_yaml(Path(risk_config_path))
-    meta = parse_run_metadata(Path(model_path).stem)
+    meta = parse_run_metadata(run_name)
     rows: List[Dict] = []
     trace_rows: List[Dict] = []
     risk_rows: List[Dict] = []
@@ -281,20 +290,25 @@ def evaluate_model(
         ttc_min = 1e6
         thw_min = 1e6
         drac_max = 0.0
-        risk_exposure = 0.0
-        risk_score_max = 0.0
+        risk_exposure_v1 = 0.0
+        risk_exposure_v2 = 0.0
+        risk_score_v1_max = 0.0
+        risk_score_v2_max = 0.0
         near_miss_count = 0
         target_gap_values = []
         target_rear_distance_values = []
         target_rear_relative_speed_values = []
         p_yield_values = []
         p_block_values = []
+        same_lane_front_risk_values = []
+        target_rear_risk_values = []
+        target_front_risk_values = []
         while not (terminated or truncated):
             if render_mode == "rgb_array":
                 frame = env.render()
                 if frame is not None:
                     frames.append(frame)
-            action, _ = model.predict(obs, deterministic=deterministic_eval)
+            action = int(policy_fn(obs))
             obs, reward, terminated, truncated, info = env.step(action)
             reward_sum += float(reward)
             step_risk = _risk_step(env, risk_params)
@@ -307,8 +321,10 @@ def evaluate_model(
             ttc_min = min(ttc_min, float(step_risk.get("ttc_min", 1e6)))
             thw_min = min(thw_min, float(step_risk.get("thw_min", 1e6)))
             drac_max = max(drac_max, float(step_risk.get("drac_max", 0.0)))
-            risk_exposure += float(step_risk.get("risk_score", 0.0))
-            risk_score_max = max(risk_score_max, float(step_risk.get("risk_score", 0.0)))
+            risk_exposure_v1 += float(step_risk.get("risk_score_v1", 0.0))
+            risk_exposure_v2 += float(step_risk.get("risk_score_v2", 0.0))
+            risk_score_v1_max = max(risk_score_v1_max, float(step_risk.get("risk_score_v1", 0.0)))
+            risk_score_v2_max = max(risk_score_v2_max, float(step_risk.get("risk_score_v2", 0.0)))
             if float(step_risk.get("near_miss_flag", 0.0)) > 0.5:
                 near_miss_count += 1
             target_gap_values.append(float(step_risk.get("target_gap_size", 0.0)))
@@ -316,6 +332,9 @@ def evaluate_model(
             target_rear_relative_speed_values.append(float(step_risk.get("target_rear_relative_speed", 0.0)))
             p_yield_values.append(float(step_risk.get("p_yield", 0.0)))
             p_block_values.append(float(step_risk.get("p_block", 0.0)))
+            same_lane_front_risk_values.append(float(step_risk.get("same_lane_front_risk", 0.0)))
+            target_rear_risk_values.append(float(step_risk.get("target_rear_risk", 0.0)))
+            target_front_risk_values.append(float(step_risk.get("target_front_risk", 0.0)))
             if episode_idx == 0:
                 trace_rows.append({
                     **meta,
@@ -342,8 +361,15 @@ def evaluate_model(
             "ttc_min": float(ttc_min),
             "thw_min": float(thw_min),
             "drac_max": float(drac_max),
-            "risk_exposure": float(risk_exposure),
-            "risk_score_max": float(risk_score_max),
+            "risk_exposure": float(risk_exposure_v2),
+            "risk_exposure_v1": float(risk_exposure_v1),
+            "risk_exposure_v2": float(risk_exposure_v2),
+            "risk_score_max": float(risk_score_v2_max),
+            "risk_score_v1_max": float(risk_score_v1_max),
+            "risk_score_v2_max": float(risk_score_v2_max),
+            "same_lane_front_risk": float(np.mean(same_lane_front_risk_values) if same_lane_front_risk_values else 0.0),
+            "target_rear_risk": float(np.mean(target_rear_risk_values) if target_rear_risk_values else 0.0),
+            "target_front_risk": float(np.mean(target_front_risk_values) if target_front_risk_values else 0.0),
             "near_miss_count": int(near_miss_count),
             "target_gap_size": float(np.mean(target_gap_values) if target_gap_values else 0.0),
             "target_rear_distance": float(np.mean(target_rear_distance_values) if target_rear_distance_values else 0.0),
@@ -360,6 +386,27 @@ def evaluate_model(
         gif_path.parent.mkdir(parents=True, exist_ok=True)
         imageio.mimsave(gif_path, frames, fps=int(env_cfg.get("gif_fps", 15)))
     return pd.DataFrame(rows), pd.DataFrame(trace_rows), pd.DataFrame(risk_rows)
+
+
+def evaluate_model(
+    model_path: Path,
+    env_config_path: Path,
+    risk_config_path: Path,
+    seed: int,
+    episodes: int,
+    deterministic_eval: bool,
+    gif_path: Optional[Path] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    model = DQN.load(Path(model_path))
+    return _evaluate_policy_core(
+        policy_fn=lambda obs: int(model.predict(obs, deterministic=deterministic_eval)[0]),
+        run_name=Path(model_path).stem,
+        env_config_path=env_config_path,
+        risk_config_path=risk_config_path,
+        seed=seed,
+        episodes=episodes,
+        gif_path=gif_path,
+    )
 
 
 def aggregate_training_curves(csv_paths: Iterable[Path]) -> pd.DataFrame:
@@ -389,7 +436,7 @@ def load_eval_metrics(csv_paths: Iterable[Path]) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
-    if "run_name" not in df.columns:
+    if "run_name" not in df.columns and "method" in df.columns:
         metadata = pd.DataFrame([parse_run_metadata(str(name)) for name in df["method"].tolist()])
         for column in metadata.columns:
             if column not in df.columns:
@@ -400,8 +447,8 @@ def load_eval_metrics(csv_paths: Iterable[Path]) -> pd.DataFrame:
 def summarize_episode_metrics(df: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
-    agg_spec = {f"{metric}_mean": (metric, "mean") for metric in EPISODE_METRICS}
-    agg_spec.update({f"{metric}_std": (metric, "std") for metric in EPISODE_METRICS})
+    agg_spec = {f"{metric}_mean": (metric, "mean") for metric in EPISODE_METRICS if metric in df.columns}
+    agg_spec.update({f"{metric}_std": (metric, "std") for metric in EPISODE_METRICS if metric in df.columns})
     summary = df.groupby(group_cols, as_index=False).agg(**agg_spec)
     return summary.fillna(0.0)
 
@@ -409,28 +456,24 @@ def summarize_episode_metrics(df: pd.DataFrame, group_cols: List[str]) -> pd.Dat
 def summarize_across_seeds(seed_summary: pd.DataFrame) -> pd.DataFrame:
     if seed_summary.empty:
         return pd.DataFrame()
-    grouped = seed_summary.groupby(["method", "steps"], as_index=False).agg(
-        seed_count=("seed", "nunique"),
-        reward_mean=("reward_mean", "mean"),
-        reward_std=("reward_mean", "std"),
-        collision_rate_mean=("collision_mean", "mean"),
-        collision_rate_std=("collision_mean", "std"),
-        success_rate_mean=("success_mean", "mean"),
-        success_rate_std=("success_mean", "std"),
-        avg_speed_mean=("avg_speed_mean", "mean"),
-        avg_speed_std=("avg_speed_mean", "std"),
-        episode_length_mean=("episode_length_mean", "mean"),
-        episode_length_std=("episode_length_mean", "std"),
-        lane_change_count_mean=("lane_change_count_mean", "mean"),
-        lane_change_count_std=("lane_change_count_mean", "std"),
-        near_miss_count_mean=("near_miss_count_mean", "mean"),
-        near_miss_count_std=("near_miss_count_mean", "std"),
-        p_yield_mean=("p_yield_mean", "mean"),
-        p_yield_std=("p_yield_mean", "std"),
-        p_block_mean=("p_block_mean", "mean"),
-        p_block_std=("p_block_mean", "std"),
-    )
-    grouped["method_label"] = grouped.apply(lambda row: f"{row['method']} ({int(row['steps']) // 1000}k)", axis=1)
+    grouped = seed_summary.groupby(["method", "steps"], as_index=False).agg(seed_count=("seed", "nunique"))
+    for metric in EPISODE_METRICS:
+        source_col = f"{metric}_mean"
+        if source_col not in seed_summary.columns:
+            continue
+        target = metric
+        if metric == "collision":
+            target = "collision_rate"
+        elif metric == "success":
+            target = "success_rate"
+        stats = seed_summary.groupby(["method", "steps"], as_index=False).agg(
+            **{
+                f"{target}_mean": (source_col, "mean"),
+                f"{target}_std": (source_col, "std"),
+            }
+        )
+        grouped = grouped.merge(stats, on=["method", "steps"], how="left")
+    grouped["method_label"] = grouped.apply(lambda row: f"{row['method']} ({int(row['steps']) // 1000}k)" if int(row["steps"]) > 0 else str(row["method"]), axis=1)
     return grouped.fillna(0.0)
 
 
@@ -470,3 +513,28 @@ def aggregate_eval_metrics(csv_paths: Iterable[Path]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
     return summarize_episode_metrics(df, ["method", "steps", "seed"])
+
+
+def evaluate_callable_policy(
+    run_name: str,
+    policy_fn: Callable[[np.ndarray], int],
+    env_config_path: Path,
+    risk_config_path: Path,
+    seed: int,
+    episodes: int,
+    gif_path: Optional[Path] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    return _evaluate_policy_core(
+        policy_fn=policy_fn,
+        run_name=run_name,
+        env_config_path=env_config_path,
+        risk_config_path=risk_config_path,
+        seed=seed,
+        episodes=episodes,
+        gif_path=gif_path,
+    )
+
+
+def action_name_to_id(env, action_name: str) -> int:
+    action_map = get_action_map(env)
+    return int(action_map.get(action_name, action_map.get("IDLE", 1)))
