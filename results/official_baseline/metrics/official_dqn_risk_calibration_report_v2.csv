@@ -1,0 +1,17 @@
+section,group,metric,p10,p25,median,p75,p90,auc,gate,risk_score_v1_auc,risk_score_v2_auc,drac_auc,inverse_ttc_auc,near_miss_auc,risk_score_v2_median_collision,risk_score_v2_median_non_collision,near_miss_ratio_mean,near_miss_ratio_p90,recommended_formula
+percentiles,non_collision,risk_score_v1_max,1.4464135421357553,5.093562229122696,12.763264888095431,18.981464505571513,24.1742672013375,,,,,,,,,,,,
+percentiles,non_collision,risk_score_v2_max,0.6230759578621258,3.3479054608019183,7.192091836981481,7.347049249794216,7.670180003776196,,,,,,,,,,,,
+percentiles,non_collision,drac_max,0.7799710168233721,3.4417133526370454,10.161338554822269,24.531355341935488,65.82154467533118,,,,,,,,,,,,
+percentiles,non_collision,ttc_min,0.06931140110504279,0.2084913853731768,0.49172382968500405,1.2870926630636916,4.933984941842728,,,,,,,,,,,,
+percentiles,non_collision,near_miss_count,0.0,2.0,4.0,7.0,9.0,,,,,,,,,,,,
+percentiles,collision,risk_score_v1_max,4.3359140231618065,7.1704768809543795,10.346124143577157,17.064150489716802,20.52041079563141,,,,,,,,,,,,
+percentiles,collision,risk_score_v2_max,2.941291516326711,4.458639411958715,6.935974142876949,7.461797667423701,7.980537159565738,,,,,,,,,,,,
+percentiles,collision,drac_max,3.1857831769991134,4.817873068453588,8.21590542858644,18.328161080999298,34.576262628676474,,,,,,,,,,,,
+percentiles,collision,ttc_min,0.1532704902171063,0.28249589188787533,0.6343995909801027,0.9074629747786686,1.5463950495475223,,,,,,,,,,,,
+percentiles,collision,near_miss_count,1.0,2.0,4.0,6.0,8.0,,,,,,,,,,,,
+auc,all,risk_score_v1_max,,,,,,0.47198870353342964,,,,,,,,,,,
+auc,all,risk_score_v2_max,,,,,,0.5439544200709313,,,,,,,,,,,
+auc,all,drac_max,,,,,,0.48927273523359166,,,,,,,,,,,
+auc,all,inverse_ttc_min,,,,,,0.48042821489557336,,,,,,,,,,,
+auc,all,near_miss_count,,,,,,0.46722163842550024,,,,,,,,,,,
+recommendation,all,risk_score_v2_gate,,,,,,,fail,0.47198870353342964,0.5439544200709313,0.48927273523359166,0.48042821489557336,0.46722163842550024,6.935974142876949,7.192091836981481,0.18082977859017915,0.3333333333333333,risk_score_v2 still fails calibration; collision median risk_score_v2_max does not exceed non-collision median; increase target rear conflict sensitivity; reduce over-dominant same-lane term; retune clipped TTC/DRAC term weights before reward or masking.
